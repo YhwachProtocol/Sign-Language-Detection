@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign Language Detector</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --page: #eeedf3;
+    --panel: #fcfcfb;
+    --ink: #17162b;
+    --ink-2: #54536b;
+    --ink-3: #6c6b82;
+    --line: #e2e0ec;
+    --stage: #0e0d1b;
+    --good: #1a7f4b;
+    --s1: #2a78d6;   /* frame capture */
+    --s2: #eb6834;   /* preprocessing */
+    --s3: #1baf7a;   /* feature extraction & classification */
+    --s4: #eda100;   /* display */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #101012;
+      --panel: #1a1a19;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --ink-3: #9a998f;
+      --line: #2e2e2b;
+      --stage: #08080c;
+      --good: #3fbf7f;
+      --s1: #3987e5;
+      --s2: #d95926;
+      --s3: #199e70;
+      --s4: #c98500;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #101012;
+    --panel: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --ink-3: #9a998f;
+    --line: #2e2e2b;
+    --stage: #08080c;
+    --good: #3fbf7f;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --s4: #c98500;
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--page); }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, p { margin: 0; }
+  button, a.btn { font: inherit; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 6px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px 64px; }
+
+  /* ---------- header ---------- */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 0 20px; }
+  .top h1 { font-size: 21px; font-weight: 800; letter-spacing: -0.015em; }
+  .top p { color: var(--ink-3); font-size: 14px; }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink-2);
+            padding: 7px 14px 7px 12px; background: var(--panel); border-radius: 99px; white-space: nowrap; }
+  .status .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); }
+  .status.live .dot { background: var(--good); }
+
+  /* ---------- stage + transcript ---------- */
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 32px; align-items: start; }
+
+  .stage { position: relative; aspect-ratio: 16 / 9; background: var(--stage); border-radius: 22px; overflow: hidden; }
+  .stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+  .stage .cam-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+                    padding: 32px; color: #e8e7f2; font-size: 17px; font-weight: 500; background: var(--stage); }
+  .stage .cam-msg[hidden] { display: none; }
+
+  .caption { position: absolute; left: 16px; right: 16px; bottom: 16px; overflow: hidden;
+             display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px;
+             padding: 16px 22px 18px; border-radius: 16px; color: #fff;
+             background: rgba(12, 11, 26, 0.74); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  .cap-word { font-size: clamp(28px, 4.4vw, 46px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.05;
+              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cap-word.idle { font-size: clamp(17px, 2vw, 21px); font-weight: 500; letter-spacing: 0; color: rgba(255,255,255,0.66); }
+  .cap-conf { text-align: right; min-width: 88px; }
+  .cap-conf b { display: block; font-size: 24px; font-weight: 700; line-height: 1.1; }
+  .cap-conf .track { height: 4px; margin-top: 6px; background: rgba(255,255,255,0.22); border-radius: 4px; overflow: hidden; }
+  .cap-conf .track i { display: block; height: 100%; width: 0; background: #fff; border-radius: 4px; transition: width .15s linear; }
+  .cap-hold { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: #fff; transition: width .15s linear; }
+
+  .side h2 { font-size: 15px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; }
+  .word { min-height: 168px; max-height: 242px; overflow-y: auto; font-size: 36px; font-weight: 700; line-height: 1.15;
+          letter-spacing: -0.015em; word-break: break-word; white-space: pre-wrap; }
+  .word .ph { font-size: 18px; font-weight: 500; letter-spacing: 0; color: var(--ink-3); white-space: normal; }
+  .caret { display: inline-block; width: 3px; height: 0.95em; margin-left: 2px; vertical-align: -0.1em; background: var(--ink);
+           animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .btn { appearance: none; border: 0; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+         padding: 9px 16px; border-radius: 99px; font-size: 14px; font-weight: 700; line-height: 1.2;
+         color: var(--ink); background: var(--line); transition: background .15s, transform .05s; }
+  .btn:hover { background: color-mix(in srgb, var(--ink) 16%, var(--panel)); }
+  .btn:active { transform: translateY(1px); }
+  .btn.solid { background: var(--ink); color: var(--panel); }
+  .btn.solid:hover { background: color-mix(in srgb, var(--ink) 82%, var(--panel)); }
+  .btn.quiet { background: transparent; color: var(--ink-2); padding-left: 6px; padding-right: 6px; }
+  .btn.quiet:hover { background: transparent; color: var(--ink); text-decoration: underline; }
+
+  .hint { margin-top: 22px; color: var(--ink-2); font-size: 14px; max-width: 34ch; }
+  .signs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .sign { padding: 4px 11px; border-radius: 99px; font-size: 13px; font-weight: 500; color: var(--ink-2);
+          background: var(--panel); transition: background .12s, color .12s; }
+  .sign.on { background: var(--ink); color: var(--panel); }
+
+  /* ---------- latency ---------- */
+  .lat { margin-top: 40px; background: var(--panel); border-radius: 22px; padding: 32px;
+         display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 48px; }
+  .lat h2 { font-size: 22px; font-weight: 800; letter-spacing: -0.015em; }
+  .lat .sub { color: var(--ink-2); margin-top: 4px; max-width: 52ch; }
+
+  .readout { display: flex; gap: 40px; margin: 26px 0 18px; }
+  .readout b { display: block; font-size: 46px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+  .readout span { display: block; margin-top: 6px; color: var(--ink-2); font-size: 14px; }
+
+  .stack { display: flex; gap: 2px; height: 30px; }
+  .seg { min-width: 3px; background: var(--c); border-radius: 3px; transition: flex-basis .3s ease; flex: 0 0 25%; }
+  .seg:first-child { border-radius: 9px 3px 3px 9px; }
+  .seg:last-child { border-radius: 3px 9px 9px 3px; }
+  .seg:hover, .seg:focus-visible { filter: brightness(1.08) saturate(1.1); }
+
+  .legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+  .legend .k { display: flex; align-items: center; gap: 7px; color: var(--ink-2); font-size: 13px; line-height: 1.25; }
+  .legend .sw { flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+  .legend b { display: block; margin: 0 0 5px 0; font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
+
+  .spark-head { display: flex; justify-content: space-between; align-items: baseline; margin: 30px 0 8px;
+                color: var(--ink-2); font-size: 14px; }
+  .spark-head em { font-style: normal; color: var(--ink-3); font-size: 13px; }
+  .spark { position: relative; height: 76px; border-bottom: 1px solid var(--line); }
+  .spark svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+  .spark path { fill: none; stroke: var(--ink-2); stroke-width: 2; vector-effect: non-scaling-stroke;
+                stroke-linejoin: round; stroke-linecap: round; }
+  .spark .cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink-3); pointer-events: none; display: none; }
+  .spark .pt { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%;
+               background: var(--ink); border: 2px solid var(--panel); pointer-events: none; display: none; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 15px; }
+  th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 13px; padding: 0 0 8px; }
+  th:last-child, td:last-child { text-align: right; }
+  td { padding: 11px 0; border-top: 1px solid var(--line); }
+  td .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-right: 9px; }
+  tr.total td { font-weight: 800; border-top: 2px solid var(--ink); }
+  .none { color: var(--ink-3); }
+  .lat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; align-items: center; }
+  .empty { margin-top: 14px; color: var(--ink-2); font-size: 14px; }
+  details { margin-top: 22px; color: var(--ink-2); font-size: 14px; }
+  summary { cursor: pointer; font-weight: 700; color: var(--ink); }
+  details ul { margin: 10px 0 0; padding-left: 18px; }
+  details li { margin-bottom: 6px; max-width: 58ch; }
+
+  #tip { position: fixed; z-index: 10; pointer-events: none; display: none; padding: 7px 11px; border-radius: 10px;
+         background: var(--ink); color: var(--panel); font-size: 13px; font-weight: 500; line-height: 1.35; white-space: nowrap; }
+
+  @media (max-width: 980px) {
+    .grid { grid-template-columns: 1fr; gap: 24px; }
+    .word { min-height: 110px; }
+    .lat { grid-template-columns: 1fr; gap: 36px; padding: 24px; }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 0 16px 48px; }
+    .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .readout { gap: 28px; }
+    .readout b { font-size: 38px; }
+    .caption { left: 10px; right: 10px; bottom: 10px; padding: 12px 16px 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .caret { animation: none; }
+    .seg, .cap-conf .track i, .cap-hold { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1>Sign language detector</h1>
+      <p>{{ classes|length }} signs · live from your webcam</p>
+    </div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">Connecting</span></div>
+  </header>
+
+  <div class="grid">
+    <section>
+      <div class="stage">
+        <img src="/video_feed" alt="Live webcam view with the detected hand outlined">
+        <div class="cam-msg" id="camMsg" hidden>No camera found. Close any other app that is using the webcam, then restart the detector.</div>
+        <div class="caption">
+          <div class="cap-word idle" id="capWord">Show a hand to the camera</div>
+          <div class="cap-conf" id="capConf" hidden>
+            <b class="num" id="capPct">0%</b>
+            <div class="track"><i id="capBar"></i></div>
+          </div>
+          <div class="cap-hold" id="capHold"></div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <h2>Transcript</h2>
+      <div class="word" id="word"></div>
+      <div class="btns">
+        <button class="btn" type="button" data-act="space">Add space</button>
+        <button class="btn" type="button" data-act="backspace">Delete last</button>
+        <button class="btn" type="button" data-act="clear">Clear</button>
+        <button class="btn solid" type="button" id="copyText">Copy text</button>
+      </div>
+      <p class="hint">Hold a sign still for about a second to add it. Lower your hand before signing the same letter again.</p>
+      <div class="signs" id="signs">
+        {% for c in classes %}<span class="sign" data-c="{{ c }}">{{ c }}</span>{% endfor %}
+      </div>
+    </aside>
+  </div>
+
+  <section class="lat" aria-labelledby="latTitle">
+    <div>
+      <h2 id="latTitle">Pipeline latency</h2>
+      <p class="sub">How long each frame takes on this computer, measured only while a hand is in view.</p>
+
+      <div class="readout">
+        <div><b class="num" id="liveMs">–</b><span>ms per frame</span></div>
+        <div><b class="num" id="liveFps">–</b><span>frames per second</span></div>
+      </div>
+
+      <div class="stack" id="stack" role="img" aria-label="Share of frame time spent in each pipeline stage"></div>
+      <div class="legend" id="legend"></div>
+
+      <div class="spark-head"><span>Total time per frame</span><em id="sparkMax">last 60 frames</em></div>
+      <div class="spark" id="spark">
+        <svg id="sparkSvg" viewBox="0 0 600 76" preserveAspectRatio="none" aria-hidden="true"><path id="sparkPath" d=""/></svg>
+        <div class="cross" id="sparkCross"></div>
+        <div class="pt" id="sparkPt"></div>
+      </div>
+    </div>
+
+    <div>
+      <h2>Averages for your report</h2>
+      <p class="sub" id="tableSub">Over 0 frames</p>
+      <table>
+        <thead><tr><th>Stage</th><th>Average</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p class="empty" id="empty">Hold a hand in front of the camera to start measuring.</p>
+      <div class="lat-actions">
+        <button class="btn solid" type="button" id="copyTable">Copy table</button>
+        <a class="btn" href="/timing.csv" download>Download CSV</a>
+        <button class="btn quiet" type="button" id="resetTiming">Reset timings</button>
+      </div>
+      <details>
+        <summary>What each stage measures</summary>
+        <ul>
+          <li><b>Frame capture:</b> reading one picture from the webcam. This is mostly waiting for the camera's next frame.</li>
+          <li><b>Preprocessing:</b> cutting out the hand and resizing it to 300 × 300 for the model.</li>
+          <li><b>Feature extraction &amp; classification:</b> finding the hand with MediaPipe, then the neural network naming the sign.</li>
+          <li><b>Display:</b> drawing the outline and preview, and encoding the picture for this page. Time spent in your browser is not included.</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+</div>
+
+<div id="tip" role="tooltip"></div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const STAGES = [
+    { key: 'capture',    name: 'Frame capture',                       color: 'var(--s1)' },
+    { key: 'preprocess', name: 'Preprocessing',                       color: 'var(--s2)' },
+    { key: 'inference',  name: 'Feature extraction & classification', color: 'var(--s3)' },
+    { key: 'display',    name: 'Display',                             color: 'var(--s4)' },
+  ];
+  let last = null;
+
+  /* ---------- build static pieces once ---------- */
+  const stackEl = $('stack'), legendEl = $('legend'), rowsEl = $('rows');
+  STAGES.forEach(s => {
+    const seg = document.createElement('div');
+    seg.className = 'seg'; seg.style.setProperty('--c', s.color);
+    seg.tabIndex = 0; seg.dataset.key = s.key;
+    stackEl.appendChild(seg);
+
+    const k = document.createElement('div');
+    k.innerHTML = '<b class="num">–</b><div class="k"><span class="sw"></span><span></span></div>';
+    k.querySelector('.k').style.setProperty('--c', s.color);
+    k.querySelector('.k span:last-child').textContent = s.name;
+    k.dataset.key = s.key;
+    legendEl.appendChild(k);
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td><span class="sw"></span><span></span></td><td class="num">–</td>';
+    tr.querySelector('.sw').style.setProperty('--c', s.color);
+    tr.querySelector('td span:last-child').textContent = s.name;
+    tr.dataset.key = s.key;
+    rowsEl.appendChild(tr);
+  });
+  const totalRow = document.createElement('tr');
+  totalRow.className = 'total';
+  totalRow.innerHTML = '<td>Total / frames per second</td><td class="num">–</td>';
+  rowsEl.appendChild(totalRow);
+
+  /* ---------- tooltip ---------- */
+  const tip = $('tip');
+  function showTip(text, x, y) {
+    tip.textContent = text; tip.style.display = 'block';
+    const w = tip.offsetWidth;
+    tip.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, x - w / 2)) + 'px';
+    tip.style.top = (y - tip.offsetHeight - 12) + 'px';
+  }
+  const hideTip = () => { tip.style.display = 'none'; };
+
+  stackEl.addEventListener('pointermove', e => {
+    const seg = e.target.closest('.seg');
+    if (!seg || !last) return hideTip();
+    const s = STAGES.find(x => x.key === seg.dataset.key), live = last.timing.live;
+    const pct = live.total ? live[s.key] / live.total * 100 : 0;
+    showTip(`${s.name}: ${live[s.key].toFixed(1)} ms (${pct.toFixed(0)}%)`, e.clientX, e.clientY);
+  });
+  stackEl.addEventListener('pointerleave', hideTip);
+  stackEl.addEventListener('focusin', e => {
+    const seg = e.target.closest('.seg'); if (!seg || !last) return;
+    const s = STAGES.find(x => x.key === seg.dataset.key), r = seg.getBoundingClientRect();
+    showTip(`${s.name}: ${last.timing.live[s.key].toFixed(1)} ms`, r.left + r.width / 2, r.top);
+  });
+  stackEl.addEventListener('focusout', hideTip);
+
+  /* ---------- sparkline ---------- */
+  const spark = $('spark'), cross = $('sparkCross'), pt = $('sparkPt');
+  let hist = [], yMax = 1;
+  function drawSpark(h) {
+    hist = h;
+    if (h.length < 2) { $('sparkPath').setAttribute('d', ''); $('sparkMax').textContent = 'last 60 frames'; return; }
+    yMax = Math.max(...h) * 1.15;
+    const W = 600, H = 76, pad = 4;
+    const d = h.map((v, i) => {
+      const x = h.length === 1 ? 0 : i / (h.length - 1) * W;
+      const y = H - pad - (v / yMax) * (H - pad * 2);
+      return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
+    }).join(' ');
+    $('sparkPath').setAttribute('d', d);
+    $('sparkMax').textContent = `peak ${Math.max(...h).toFixed(1)} ms · last ${h.length} frames`;
+  }
+  spark.addEventListener('pointermove', e => {
+    if (hist.length < 2) return;
+    const r = spark.getBoundingClientRect();
+    const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const i = Math.round(f * (hist.length - 1)), v = hist[i];
+    const x = i / (hist.length - 1) * r.width;
+    const y = r.height - 4 - (v / yMax) * (r.height - 8);
+    cross.style.display = pt.style.display = 'block';
+    cross.style.left = x + 'px'; pt.style.left = x + 'px'; pt.style.top = y + 'px';
+    showTip(`${v.toFixed(1)} ms · ${hist.length - 1 - i} frames ago`, r.left + x, r.top + y);
+  });
+  spark.addEventListener('pointerleave', () => { cross.style.display = pt.style.display = 'none'; hideTip(); });
+
+  /* ---------- render ---------- */
+  function render(s) {
+    last = s;
+    $('status').classList.toggle('live', s.camera);
+    $('statusText').textContent = s.camera ? 'Camera live' : 'No camera';
+    $('camMsg').hidden = s.camera;
+
+    const capWord = $('capWord'), capConf = $('capConf');
+    if (s.hand && s.label) {
+      capWord.textContent = s.label; capWord.classList.remove('idle');
+      const pct = Math.round(s.confidence * 100);
+      $('capPct').textContent = pct + '%'; $('capBar').style.width = pct + '%'; capConf.hidden = false;
+    } else {
+      capWord.textContent = s.hand ? 'Reading…' : 'Show a hand to the camera';
+      capWord.classList.add('idle'); capConf.hidden = true;
+    }
+    $('capHold').style.width = Math.round(s.progress * 100) + '%';
+
+    const w = $('word');
+    w.replaceChildren();
+    if (s.word) w.append(document.createTextNode(s.word));
+    else { const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = 'Signs you hold will appear here.'; w.append(ph); }
+    const c = document.createElement('span'); c.className = 'caret'; w.append(c);
+    document.querySelectorAll('.sign').forEach(el =>
+      el.classList.toggle('on', s.hand && el.dataset.c === s.label));
+
+    const t = s.timing, has = t.frames > 0;
+    $('liveMs').textContent = has ? t.live.total.toFixed(1) : '–';
+    $('liveFps').textContent = has ? t.live.fps.toFixed(1) : '–';
+    stackEl.querySelectorAll('.seg').forEach(seg => {
+      const share = has && t.live.total ? t.live[seg.dataset.key] / t.live.total * 100 : 25;
+      seg.style.flexBasis = share + '%';
+    });
+    legendEl.querySelectorAll('[data-key]').forEach(el =>
+      el.querySelector('b').textContent = has ? t.live[el.dataset.key].toFixed(1) + ' ms' : '–');
+    drawSpark(t.history);
+
+    $('tableSub').textContent = `Over ${t.frames.toLocaleString()} frame${t.frames === 1 ? '' : 's'} with a hand in view`;
+    rowsEl.querySelectorAll('tr[data-key]').forEach(tr =>
+      tr.lastElementChild.textContent = has ? t.avg[tr.dataset.key].toFixed(2) + ' ms' : '–');
+    totalRow.lastElementChild.textContent = has ? `${t.avg.total.toFixed(2)} ms / ${t.avg.fps.toFixed(1)} FPS` : '–';
+    $('empty').hidden = has;
+  }
+
+  async function poll() {
+    try {
+      render(await (await fetch('/state')).json());
+    } catch (e) {
+      $('status').classList.remove('live'); $('statusText').textContent = 'Disconnected';
+    }
+  }
+  setInterval(poll, 150); poll();
+
+  /* ---------- actions ---------- */
+  const post = act => fetch('/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: act }) });
+  document.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => post(b.dataset.act)));
+  $('resetTiming').addEventListener('click', () => post('reset_timing'));
+
+  function flash(btn, text) {
+    const old = btn.textContent; btn.textContent = text;
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  }
+  async function copy(btn, text) {
+    try { await navigator.clipboard.writeText(text); flash(btn, 'Copied'); }
+    catch (e) { flash(btn, 'Copy failed'); }
+  }
+  $('copyText').addEventListener('click', e => copy(e.currentTarget, last ? last.word : ''));
+  $('copyTable').addEventListener('click', e => {
+    if (!last || !last.timing.frames) return flash(e.currentTarget, 'No data yet');
+    const t = last.timing, a = t.avg, bar = '='.repeat(40);
+    const line = (n, v) => (n + ':').padEnd(30) + v;
+    copy(e.currentTarget, [
+      bar, ` TABLE 5.6 AVERAGES (over ${t.frames} frames)`, bar,
+      line('Frame capture', a.capture.toFixed(2) + ' ms'),
+      line('Preprocessing', a.preprocess.toFixed(2) + ' ms'),
+      line('Feature extraction & class', a.inference.toFixed(2) + ' ms'),
+      line('Display', a.display.toFixed(2) + ' ms'),
+      line('Total / Frames per second', `${a.total.toFixed(2)} ms / ${a.fps.toFixed(1)} FPS`),
+      bar,
+    ].join('\n'));
+  });
+</script>
+</body>
+</html>
